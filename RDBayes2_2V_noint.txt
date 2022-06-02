@@ -1,0 +1,16 @@
+model {
+   for(i in 1:length(y)) { 
+    y[i] ~ dbinom(p[i],1)
+    logit(p[i]) <- log((pnul+rdelta[i])/(1-(pnul+rdelta[i])))
+    rdelta[i] <- beta*x[i]+beta2*x2[i] 
+   }
+   
+   for(i in 1:length(xtilde)){
+      pred.effect[i] <- beta
+   }
+   
+   beta ~ dnorm(0,1)
+   beta2 ~ dnorm(0,1)
+   #precision was 1
+   pnul ~ dunif(0,1)
+}

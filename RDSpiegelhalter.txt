@@ -1,0 +1,8 @@
+model {
+   for(i in 1:length(y)) { 
+    y[i] ~ dbinom(p[i],1)
+    p[i] <- mu + min(max((beta*x[i]),(0-mu)),(1-mu))
+   }
+   beta ~ dnorm(0,1)T(-1,1)
+   mu ~ dunif(0,1)
+}
