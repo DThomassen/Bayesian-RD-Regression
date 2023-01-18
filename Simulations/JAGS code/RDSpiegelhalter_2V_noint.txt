@@ -1,0 +1,14 @@
+model {
+   for(i in 1:length(y)) { 
+    y[i] ~ dbinom(p[i],1)
+    p[i] <- mu + min(max((beta*x[i]+beta2*x2[i]),(0-mu)),(1-mu))
+   }
+   
+   for(i in 1:length(xtilde)){
+      pred.effect[i] <- beta
+   }
+   
+   beta ~ dnorm(0,1)
+   beta2 ~ dnorm(0,1)
+   mu ~ dunif(0,1)
+}
