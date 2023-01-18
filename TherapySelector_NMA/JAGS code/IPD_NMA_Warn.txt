@@ -1,0 +1,46 @@
+model {
+
+    for(s in 1:NS) { # loop over studies
+        for (a in 1:narms[s])  { # loop over arms
+          for (y in 1:npt[s,a]) { # loops over pts in this arm
+          
+            SVR[s,a,y] ~ dbin(p[s,t[s,a],y], 1)
+            p[s,t[s,a],y] <- mu[s] + min(max(delta[s,t[s,a]],-mu[s]),(1-mu[s]))
+          }
+        }
+        
+        delta[s,t[s,1]]<-0
+        w[s,1] <- 0
+        
+        for (a in 2:narms[s]) {
+	     ## normally-distributed random treatment effects
+            delta[s,t[s,a]] ~ dnorm(md[s,t[s,a]],taud[s,t[s,a]])
+            md[s,t[s,a]] <- d[t[s,a]] - d[t[s,1]] + sw[s,a]
+
+            ## adjustment for correlation within trials with 3 arms or more
+            sw[s,a] <- sum(w[s,1:(a-1)])/(a-1)
+            w[s,a] <- (delta[s,t[s,a]]  - d[t[s,a]] + d[t[s,1]])
+
+            ## random effects 1/variance constrained to be the same for every comparison
+            taud[s,t[s,a]] <- tau*2*(a-1)/a
+        }
+        ## log odds ratio compared to treatment in arm 1 of study s
+    }
+    
+    for (i in 1:NS){
+        mu[i] ~ dunif(0,1) # vague prior for baseline risk
+    }
+    
+    # log odds ratio compared to treatment 1 (e.g. placebo)
+    d[1] <- 0  
+    for (i in 2:NT) {
+        d[i] ~ dnorm(0, 1)T(-1,1)
+    }
+    
+    tau <- 1/pow(sd, 2)
+    sd ~ dunif(0, 1)
+
+    RD <- d
+    
+
+} 
