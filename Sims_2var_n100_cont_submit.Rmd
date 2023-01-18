@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 
 
-```{r, include=TRUE, warning=FALSE, message=FALSE}
+```{r, include=TRUE, warning=FALSE, message=FALSE, echo=FALSE}
 #define all the necessary functions
 
 require(R2jags) 
@@ -75,7 +75,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   
   # save point estimates from frequentist models 
   IC["OLS estimate"] <- NA #AIC(lin.fit)
-  if(!is.na(lin.fit)){
+  if(any(!is.na(lin.fit))){
     xicpt.lin <- lin.fit$coefficients[2]
     Rhat_Conv["OLS estimate"] <- -1*TRUE
   }else{
@@ -83,7 +83,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
     Rhat_Conv["OLS estimate"] <- FALSE
   }
   
-  if(!is.na(id.fit)){
+  if(any(!is.na(id.fit))){
     if(id.fit$converged){
       xicpt.id <- id.fit$coefficients[2]
       IC["MLE binomial GLM id-link"] <- AIC(id.fit)
@@ -93,7 +93,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
     }
   }else{xicpt.id <- NA}
   
-  if(!is.na(logit.fit) & plot_log) {
+  if(any(!is.na(logit.fit)) & plot_log) {
     if(logit.fit$converged){
       xicpt.log <- NA
       IC["MLE binomial GLM logit-link"] <- AIC(logit.fit)
@@ -103,11 +103,11 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
     }
   }else{xicpt.log <- NA}
   
-  if(!is.na(riskdiff) & plot_log)   {
+  if(any(!is.na(riskdiff)) & plot_log)   {
     xicpt.RD <- riskdiff
   }else{xicpt.RD <- NA}
   
-  if(!is.na(true.beta)){
+  if(any(!is.na(true.beta))){
     xicpt.true <- true.beta
   }else{xicpt.true <- NA}
   
@@ -136,6 +136,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   )
   sink()
   end <- Sys.time()
+  print(model)
   RunTimes["1. Proposed model"] <- as.numeric(end - start)
   IC["1. Proposed model"] <- model$BUGSoutput$DIC
   Rhat_Conv["1. Proposed model"] <- model$BUGSoutput$summary["beta", "Rhat"]
@@ -154,6 +155,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   RunTimes["3. Logistic model + transform"] <- as.numeric(end - start)
   IC["3. Logistic model + transform"] <- model2$BUGSoutput$DIC
   Rhat_Conv["3. Logistic model + transform"] <- model2$BUGSoutput$summary["logoddsbeta", "Rhat"]
+  print(model2)
   
   start <- Sys.time()
   sink("sink.txt")
@@ -169,6 +171,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   RunTimes["2. Model by Warn et al."] <- as.numeric(end - start)
   IC["2. Model by Warn et al."] <- model3$BUGSoutput$DIC
   Rhat_Conv["2. Model by Warn et al."] <- model3$BUGSoutput$summary["beta", "Rhat"]
+  print(model3)
   
   
   # Extract the posterior samples for beta and p 
@@ -188,7 +191,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   p.mod3 <- data.frame(p = model3$BUGSoutput$mean$p,
                        model = rep(ModelName[3], length(model3$BUGSoutput$mean$p)))
 
-  if(!is.na(id.fit)){
+  if(any(!is.na(id.fit))){
     p.mod5 <- data.frame(p = id.fit$fitted.values,
                          model = rep(ModelName[4], length(id.fit$fitted.values)))
   }else{
@@ -212,7 +215,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
                        model = rep(ModelName[2], length(model2$BUGSoutput$median$p)))
   p.med.mod3 <- data.frame(p = model3$BUGSoutput$median$p,
                        model = rep(ModelName[3], length(model3$BUGSoutput$median$p)))
-  if(!is.na(id.fit)){
+  if(any(!is.na(id.fit))){
     p.med.mod5 <- data.frame(p = id.fit$fitted.values,
                          model = rep(ModelName[4], length(id.fit$fitted.values)))
   }else{
@@ -323,7 +326,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
 
 # Single trial
 ##Continuous x2
-```{r}
+```{r, warning=FALSE, echo=TRUE}
 set.seed(42)
 n_arm <- 50
 treat <- c(rep(0,n_arm), rep(1,n_arm))
@@ -514,16 +517,16 @@ beta.plot$Scenario <- factor(beta.plot$Scenario,
                             "2x_cont_p=expit(-1+x+x)",
                             "2x_cont_p=expit(0+x+x)",
                             "2x_cont_p=expit(1+x+x)"),
-                   labels=c(expression(paste(x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=0.3+0.3",x[i*1],"+0.2",x[i*2],".")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=0.4+0.3",x[i*1],"+0.2",x[i*2],".")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=0.49+0.3",x[i*1],"+0.2",x[i*2],".")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=expit(-1+",x[i*1],"+",x[i*2],")")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=expit(0+",x[i*1],"+",x[i*2],")")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=expit(1+",x[i*1],"+",x[i*2],")"))
+                   labels=c(expression(paste("A. ", x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=0.3+0.3",x[i*1],"+0.2",x[i*2],".")),
+                            expression(paste("B. ", x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=0.4+0.3",x[i*1],"+0.2",x[i*2],".")),
+                            expression(paste("C. ", x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=0.49+0.3",x[i*1],"+0.2",x[i*2],".")),
+                            expression(paste("D. ", x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=expit(-1+",x[i*1],"+",x[i*2],")")),
+                            expression(paste("E. ", x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=expit(0+",x[i*1],"+",x[i*2],")")),
+                            expression(paste("F. ", x[i*1], " binary, ", x[i*2], "~U[-1,1], ", p[i],"=expit(1+",x[i*1],"+",x[i*2],")"))
                             ))
 
  plot1<- ggplot(beta.plot, aes(x=xtilde, fill = model))+ 
-      geom_ribbon(aes(ymin = TE_low, ymax = TE_upp), alpha=0.3)+
+      geom_ribbon(aes(ymin = TE_low, ymax = TE_upp, color=model), alpha=0.3, linetype="dashed", fill=NA)+
       geom_line(aes(y = TE_pred, color=model))+
       xlab(expression(x[i*2]))+
       ylab(expression(paste("Treatment effect (RD)")))+
@@ -534,7 +537,7 @@ beta.plot$Scenario <- factor(beta.plot$Scenario,
       
 
 print(plot1)
-ggsave(plot = plot1, filename="2x_cont.pdf", height=6, width = 8)
+ggsave(plot = plot1, filename="2x_cont.pdf", height=6, width = 8.4)
 ```
 
 

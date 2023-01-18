@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 
 
-```{r, include=TRUE, message=FALSE}
+```{r, include=TRUE, message=FALSE, echo=FALSE}
 #define all the necessary functions
 
 require(R2jags) 
@@ -51,7 +51,11 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   Rhat_Conv <- numeric(length(ModelName))
   names(Rhat_Conv) <- ModelName
   RunTimes <- numeric(length(ModelName))
-  names(RunTimes) <- ModelName  
+  names(RunTimes) <- ModelName 
+  ESSp0 <- numeric(length(ModelName))
+  names(ESSp0) <- ModelName
+  ESSp1 <- numeric(length(ModelName))
+  names(ESSp1) <- ModelName
   
   #Data summary
   knitcrosstab <- knitr::kable(table(trial.dat$treat, trial.dat$cure), format = "html")
@@ -75,7 +79,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   
   # save point estimates from frequentist models 
   IC["OLS estimate"] <- NA #AIC(lin.fit)
-  if(!is.na(lin.fit)){
+  if(any(!is.na(lin.fit))){
     xicpt.lin <- lin.fit$coefficients[2]
     Rhat_Conv["OLS estimate"] <- -1*TRUE
   }else{
@@ -83,7 +87,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
     Rhat_Conv["OLS estimate"] <- FALSE
   }
   
-  if(!is.na(id.fit)){
+  if(any(!is.na(id.fit))){
     if(id.fit$converged){
       xicpt.id <- id.fit$coefficients[2]
       IC["MLE binomial GLM id-link"] <- AIC(id.fit)
@@ -93,7 +97,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
     }
   }else{xicpt.id <- NA}
   
-  if(!is.na(logit.fit) & plot_log) {
+  if(any(!is.na(logit.fit)) & plot_log) {
     if(logit.fit$converged){
       xicpt.log <- NA
       IC["MLE binomial GLM logit-link"] <- AIC(logit.fit)
@@ -103,11 +107,11 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
     }
   }else{xicpt.log <- NA}
   
-  if(!is.na(riskdiff) & plot_log)   {
+  if(any(!is.na(riskdiff)) & plot_log)   {
     xicpt.RD <- riskdiff
   }else{xicpt.RD <- NA}
   
-  if(!is.na(true.beta)){
+  if(any(!is.na(true.beta))){
     xicpt.true <- true.beta
   }else{xicpt.true <- NA}
   
@@ -139,6 +143,9 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   RunTimes["1. Proposed model"] <- as.numeric(end - start)
   IC["1. Proposed model"] <- model$BUGSoutput$DIC
   Rhat_Conv["1. Proposed model"] <- model$BUGSoutput$summary["beta", "Rhat"]
+  ESSp0["1. Proposed model"] <- model$BUGSoutput$summary[nrow(model$BUGSoutput$summary)-1, "n.eff"]
+  ESSp1["1. Proposed model"] <- model$BUGSoutput$summary[nrow(model$BUGSoutput$summary), "n.eff"]
+
   
   start <- Sys.time()
   sink("sink.txt")
@@ -154,6 +161,8 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   RunTimes["3. Logistic model + transform"] <- as.numeric(end - start)
   IC["3. Logistic model + transform"] <- model2$BUGSoutput$DIC
   Rhat_Conv["3. Logistic model + transform"] <- model2$BUGSoutput$summary["logoddsbeta", "Rhat"]
+  ESSp0["3. Logistic model + transform"] <- model2$BUGSoutput$summary[nrow(model2$BUGSoutput$summary)-1, "n.eff"]
+  ESSp1["3. Logistic model + transform"] <- model2$BUGSoutput$summary[nrow(model2$BUGSoutput$summary), "n.eff"]
   
   start <- Sys.time()
   sink("sink.txt")
@@ -169,6 +178,8 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   RunTimes["2. Model by Warn et al."] <- as.numeric(end - start)
   IC["2. Model by Warn et al."] <- model3$BUGSoutput$DIC
   Rhat_Conv["2. Model by Warn et al."] <- model3$BUGSoutput$summary["beta", "Rhat"]
+  ESSp0["2. Model by Warn et al."] <- model3$BUGSoutput$summary[nrow(model$BUGSoutput$summary)-1, "n.eff"]
+  ESSp1["2. Model by Warn et al."] <- model3$BUGSoutput$summary[nrow(model$BUGSoutput$summary), "n.eff"]
   
   
   # Extract the posterior samples for beta and p 
@@ -187,7 +198,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
                        model = rep(ModelName[2], length(model2$BUGSoutput$mean$p)))
   p.mod3 <- data.frame(p = model3$BUGSoutput$mean$p,
                        model = rep(ModelName[3], length(model3$BUGSoutput$mean$p)))
-  if(!is.na(id.fit)){
+  if(any(!is.na(id.fit))){
     p.mod5 <- data.frame(p = id.fit$fitted.values,
                          model = rep(ModelName[4], length(id.fit$fitted.values)))
   }else{
@@ -211,7 +222,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
                        model = rep(ModelName[2], length(model2$BUGSoutput$median$p)))
   p.med.mod3 <- data.frame(p = model3$BUGSoutput$median$p,
                        model = rep(ModelName[3], length(model3$BUGSoutput$median$p)))
-  if(!is.na(id.fit)){
+  if(any(!is.na(id.fit))){
     p.med.mod5 <- data.frame(p = id.fit$fitted.values,
                          model = rep(ModelName[4], length(id.fit$fitted.values)))
   }else{
@@ -306,7 +317,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, true.TE.fu
   
   model.stats <- data.frame(Brier.mean, Brier.median, RMSE.p.mean, RMSE.p.median,
                             MAE.p.mean, MAE.p.median, 
-                            IC, Rhat_Conv, RunTimes)
+                            IC, Rhat_Conv, RunTimes, ESSp0, ESSp1)
   
   model.stats <- t(model.stats)
   kable_modstats <- knitr::kable(model.stats, digits = 4, format = "html")
@@ -511,12 +522,12 @@ beta.plot$Scenario <- factor(beta.plot$Scenario,
                             "2x_bin_p=expit(-1+x+x)",
                             "2x_bin_p=expit(0+x+x)",
                             "2x_bin_p=expit(1+x+x)"),
-                   labels=c(expression(paste(x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=0.2+0.3",x[i*1],"+0.3",x[i*2],".")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=0.3+0.3",x[i*1],"+0.3",x[i*2],".")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=0.39+0.3",x[i*1],"+0.3",x[i*2],".")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=expit(-1+",x[i*1],"+",x[i*2],")")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=expit(0+",x[i*1],"+",x[i*2],")")),
-                            expression(paste(x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=expit(1+",x[i*1],"+",x[i*2],")"))
+                   labels=c(expression(paste("A. ", x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=0.2+0.3",x[i*1],"+0.3",x[i*2],".")),
+                            expression(paste("B. ", x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=0.3+0.3",x[i*1],"+0.3",x[i*2],".")),
+                            expression(paste("C. ", x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=0.39+0.3",x[i*1],"+0.3",x[i*2],".")),
+                            expression(paste("D. ", x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=expit(-1+",x[i*1],"+",x[i*2],")")),
+                            expression(paste("E. ", x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=expit(0+",x[i*1],"+",x[i*2],")")),
+                            expression(paste("F. ", x[i*1], " binary, ", x[i*2], " binary, ", p[i],"=expit(1+",x[i*1],"+",x[i*2],")"))
                             ))
 
 plot1<- ggplot()+ 

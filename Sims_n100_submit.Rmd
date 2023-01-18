@@ -51,6 +51,12 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
   names(Rhat_Conv) <- ModelName
   RunTimes <- numeric(length(ModelName))
   names(RunTimes) <- ModelName  
+  ESS <- numeric(length(ModelName))
+  names(ESS) <- ModelName
+  ESSp0 <- numeric(length(ModelName))
+  names(ESSp0) <- ModelName
+  ESSp1 <- numeric(length(ModelName))
+  names(ESSp1) <- ModelName
   
   #Data summary
   knitcrosstab <- knitr::kable(table(trial.dat$treat, trial.dat$cure), format = "html")
@@ -74,7 +80,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
   
   # save point estimates from frequentist models 
   IC["OLS estimate"] <- NA #AIC(lin.fit)
-  if(!is.na(lin.fit)){
+  if(any((!is.na(lin.fit)))){
     xicpt.lin <- lin.fit$coefficients[2]
     Rhat_Conv["OLS estimate"] <- -1*TRUE
   }else{
@@ -82,7 +88,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
     Rhat_Conv["OLS estimate"] <- FALSE
   }
   
-  if(!is.na(id.fit)){
+  if(any(!is.na(id.fit))){
     if(id.fit$converged){
       xicpt.id <- id.fit$coefficients[2]
       IC["MLE binomial GLM id-link"] <- AIC(id.fit)
@@ -92,7 +98,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
     }
   }else{xicpt.id <- NA}
   
-  if(!is.na(logit.fit) & plot_log) {
+  if(any(!is.na(logit.fit)) & plot_log) {
     if(logit.fit$converged){
       xicpt.log <- expit(logit.fit$coefficients[2]+logit.fit$coefficients[1])-expit(logit.fit$coefficients[1])
       IC["MLE binomial GLM logit-link"] <- AIC(logit.fit)
@@ -102,11 +108,11 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
     }
   }else{xicpt.log <- NA}
   
-  if(!is.na(riskdiff) & plot_log)   {
+  if(any(!is.na(riskdiff)) & plot_log)   {
     xicpt.RD <- riskdiff
   }else{xicpt.RD <- NA}
   
-  if(!is.na(true.beta)){
+  if(any(!is.na(true.beta))){
     xicpt.true <- true.beta
   }else{xicpt.true <- NA}
   
@@ -137,6 +143,9 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
   RunTimes["1. Proposed model"] <- as.numeric(end - start)
   IC["1. Proposed model"] <- model$BUGSoutput$DIC
   Rhat_Conv["1. Proposed model"] <- model$BUGSoutput$summary["beta", "Rhat"]
+  ESS["1. Proposed model"] <- model$BUGSoutput$summary["beta", "n.eff"]
+  ESSp0["1. Proposed model"] <- model$BUGSoutput$summary[10, "n.eff"]
+  ESSp1["1. Proposed model"] <- model$BUGSoutput$summary[60, "n.eff"]
   
   start <- Sys.time()
   sink("sink.txt")
@@ -152,6 +161,9 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
   RunTimes["3. Logistic model + transform"] <- as.numeric(end - start)
   IC["3. Logistic model + transform"] <- model2$BUGSoutput$DIC
   Rhat_Conv["3. Logistic model + transform"] <- model2$BUGSoutput$summary["beta", "Rhat"]
+  ESS["3. Logistic model + transform"] <- model2$BUGSoutput$summary["beta", "n.eff"]
+  ESSp0["3. Logistic model + transform"] <- model2$BUGSoutput$summary[10, "n.eff"]
+  ESSp1["3. Logistic model + transform"] <- model2$BUGSoutput$summary[60, "n.eff"]
   
   start <- Sys.time()
   sink("sink.txt")
@@ -167,6 +179,10 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
   RunTimes["2. Model by Warn et al."] <- as.numeric(end - start)
   IC["2. Model by Warn et al."] <- model3$BUGSoutput$DIC
   Rhat_Conv["2. Model by Warn et al."] <- model3$BUGSoutput$summary["beta", "Rhat"]
+  ESS["2. Model by Warn et al."] <- model3$BUGSoutput$summary["beta", "n.eff"]
+  ESSp0["2. Model by Warn et al."] <- model3$BUGSoutput$summary[10, "n.eff"]
+  ESSp1["2. Model by Warn et al."] <- model3$BUGSoutput$summary[60, "n.eff"]
+
 
   
   # Extract the posterior samples for beta and p 
@@ -192,7 +208,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
                        model = rep(ModelName[2], length(model2$BUGSoutput$mean$p)))
   p.mod3 <- data.frame(p = model3$BUGSoutput$mean$p,
                        model = rep(ModelName[3], length(model3$BUGSoutput$mean$p)))
-  if(!is.na(id.fit)){
+  if(any(!is.na(id.fit))){
     p.mod5 <- data.frame(p = id.fit$fitted.values,
                          model = rep(ModelName[4], length(id.fit$fitted.values)))
   }else{
@@ -216,7 +232,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
                        model = rep(ModelName[2], length(model2$BUGSoutput$median$p)))
   p.med.mod3 <- data.frame(p = model3$BUGSoutput$median$p,
                        model = rep(ModelName[3], length(model3$BUGSoutput$median$p)))
-  if(!is.na(id.fit)){
+  if(any(!is.na(id.fit))){
     p.med.mod5 <- data.frame(p = id.fit$fitted.values,
                          model = rep(ModelName[4], length(id.fit$fitted.values)))
   }else{
@@ -337,7 +353,7 @@ run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim,
   
   model.stats <- data.frame(Brier.mean, Brier.median, RMSE.p.mean, RMSE.p.median,
                             MAE.p.mean, MAE.p.median, L1_loss.mean, L1_loss.median, 
-                            IC, Rhat_Conv, RunTimes)
+                            IC, Rhat_Conv, RunTimes, ESS, ESSp0, ESSp1)
   
   model.stats <- t(model.stats)
   
@@ -370,6 +386,7 @@ true.p <- 0.5+true.beta*treat
 
 cure <- rbinom(n=length(treat), size=1, prob = true.p)
 trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
 
 plots <- run.sim(true.beta=true.beta,
         trial.dat = trial.dat,
@@ -391,6 +408,7 @@ true.p <- 0.6+true.beta*treat
 
 cure <- rbinom(n=length(treat), size=1, prob = true.p)
 trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
 
 plots <- run.sim(true.beta=true.beta,
         trial.dat = trial.dat,
@@ -412,6 +430,7 @@ true.p <- 0.69+true.beta*treat
 
 cure <- rbinom(n=length(treat), size=1, prob = true.p)
 trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
 
 plots <- run.sim(true.beta=true.beta,
         trial.dat = trial.dat,
@@ -435,6 +454,7 @@ true.p <- 0.8+true.beta*treat
 
 cure <- rbinom(n=length(treat), size=1, prob = true.p)
 trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
 
 plots <- run.sim(true.beta=true.beta,
         trial.dat = trial.dat,
@@ -456,6 +476,7 @@ true.p <- 0.9+true.beta*treat
 
 cure <- rbinom(n=length(treat), size=1, prob = true.p)
 trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
 
 plots <- run.sim(true.beta=true.beta,
         trial.dat = trial.dat,
@@ -478,6 +499,7 @@ true.p <- 0.99 + true.beta*treat
 
 cure <- rbinom(n=length(treat), size=1, prob = true.p)
 trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
 
 plots <- run.sim(true.beta=true.beta,
         trial.dat = trial.dat,
@@ -502,12 +524,12 @@ beta.plot$Scenario <- factor(beta.plot$Scenario,
                             "1x_bin_p=0.8+0x",
                             "1x_bin_p=0.9+0x",
                             "1x_bin_p=0.99+0x"),
-                   labels=c(expression(paste(x[i*1], " binary, ", p[i],"=0.5+0.3",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.6+0.3",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.69+0.3",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.8+0",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.9+0",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.99+0",x[i*1],"."))
+                   labels=c(expression(paste("A. ", x[i*1], " binary, ", p[i],"=0.5+0.3",x[i*1],".")),
+                            expression(paste("B. ", x[i*1], " binary, ", p[i],"=0.6+0.3",x[i*1],".")),
+                            expression(paste("C. ", x[i*1], " binary, ", p[i],"=0.69+0.3",x[i*1],".")),
+                            expression(paste("D. ", x[i*1], " binary, ", p[i],"=0.8+0",x[i*1],".")),
+                            expression(paste("E. ", x[i*1], " binary, ", p[i],"=0.9+0",x[i*1],".")),
+                            expression(paste("F. ", x[i*1], " binary, ", p[i],"=0.99+0",x[i*1],"."))
                             ))
 
 xicpt.plot$Scenario <- factor(xicpt.plot$Scenario,
@@ -517,12 +539,12 @@ xicpt.plot$Scenario <- factor(xicpt.plot$Scenario,
                             "1x_bin_p=0.8+0x",
                             "1x_bin_p=0.9+0x",
                             "1x_bin_p=0.99+0x"),
-                   labels=c(expression(paste(x[i*1], " binary, ", p[i],"=0.5+0.3",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.6+0.3",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.69+0.3",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.8+0",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.9+0",x[i*1],".")),
-                            expression(paste(x[i*1], " binary, ", p[i],"=0.99+0",x[i*1],"."))
+                   labels=c(expression(paste("A. ", x[i*1], " binary, ", p[i],"=0.5+0.3",x[i*1],".")),
+                            expression(paste("B. ", x[i*1], " binary, ", p[i],"=0.6+0.3",x[i*1],".")),
+                            expression(paste("C. ", x[i*1], " binary, ", p[i],"=0.69+0.3",x[i*1],".")),
+                            expression(paste("D. ", x[i*1], " binary, ", p[i],"=0.8+0",x[i*1],".")),
+                            expression(paste("E. ", x[i*1], " binary, ", p[i],"=0.9+0",x[i*1],".")),
+                            expression(paste("F. ", x[i*1], " binary, ", p[i],"=0.99+0",x[i*1],"."))
                             ))
 
 ##plot maken
