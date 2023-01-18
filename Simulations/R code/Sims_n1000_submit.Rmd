@@ -1,0 +1,863 @@
+---
+title: "RD modelling - simulations"
+author: "Doranne Thomassen"
+date: "3/22/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r, include=FALSE}
+#define all the necessary functions
+
+require(R2jags) 
+require(ggplot2)
+require(knitr)
+require(purrr)
+
+Brier.score <- function(y, p.pred){
+  if(length(y)!=length(p.pred)){stop("lengths of y and p differ")}
+  BS <- (1/length(y))*sum((y-p.pred)^2)
+}
+
+expit <- function(x) {
+  expitx <- exp(x)/(1+exp(x))
+  return(expitx)
+}
+
+logit <- function(x){
+  logitx <- log((x)/(1-x))
+  return(logitx)
+}
+
+PosGLM <- possibly(.f=glm, otherwise = NA)
+PosLM <- possibly(.f=lm, otherwise = NA)
+
+run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim, beta_ylim, plot_log = TRUE){
+  
+  ModelName <- c("1. Proposed model",
+                 "3. Logistic model + transform",
+                 "2. Model by Warn et al.",
+                 "MLE binomial GLM id-link",
+                 "MLE binomial GLM logit-link",
+                 "OLS estimate")
+  IC <- numeric(length(ModelName))
+  names(IC) <- ModelName
+  Rhat_Conv <- numeric(length(ModelName))
+  names(Rhat_Conv) <- ModelName
+  RunTimes <- numeric(length(ModelName))
+  names(RunTimes) <- ModelName  
+  ESS <- numeric(length(ModelName))
+  names(ESS) <- ModelName
+  ESSp0 <- numeric(length(ModelName))
+  names(ESSp0) <- ModelName
+  ESSp1 <- numeric(length(ModelName))
+  names(ESSp1) <- ModelName
+  
+  #Data summary
+  knitcrosstab <- knitr::kable(table(trial.dat$treat, trial.dat$cure), format = "html")
+  riskdiff=(mean(trial.dat$cure[which(trial.dat$treat==1)])-mean(trial.dat$cure[which(trial.dat$treat==0)]))
+  
+  #Fit frequentist models if possible and save running times
+  start <- Sys.time()
+  id.fit <- PosGLM(cure ~  treat , data = trial.dat, family = binomial(link = "identity"))
+  end <- Sys.time()
+  RunTimes["MLE binomial GLM id-link"] <- as.numeric(end - start)
+  
+  start <- Sys.time()
+  logit.fit <- PosGLM(cure ~  treat , data = trial.dat, family = binomial(link = "logit"))
+  end <- Sys.time()
+  RunTimes["MLE binomial GLM logit-link"] <- as.numeric(end - start)
+  
+  start <- Sys.time()
+  lin.fit <- PosLM(trial.dat$cure ~  trial.dat$treat)
+  end <- Sys.time()
+  RunTimes["OLS estimate"] <- as.numeric(end - start)
+  
+  # save point estimates from frequentist models 
+  IC["OLS estimate"] <- NA #AIC(lin.fit)
+  if(any(!is.na(lin.fit))){
+    xicpt.lin <- lin.fit$coefficients[2]
+    Rhat_Conv["OLS estimate"] <- -1*TRUE
+  }else{
+    xicpt.lin <- NA
+    Rhat_Conv["OLS estimate"] <- FALSE
+  }
+  
+  if(any(!is.na(id.fit))){
+    if(id.fit$converged){
+      xicpt.id <- id.fit$coefficients[2]
+      IC["MLE binomial GLM id-link"] <- AIC(id.fit)
+      Rhat_Conv["MLE binomial GLM id-link"] <- -1*id.fit$converged
+    }else{
+      xicpt.id <- NA
+    }
+  }else{xicpt.id <- NA}
+  
+  if(any(!is.na(logit.fit)) & plot_log) {
+    if(logit.fit$converged){
+      xicpt.log <- expit(logit.fit$coefficients[2]+logit.fit$coefficients[1])-expit(logit.fit$coefficients[1])
+      IC["MLE binomial GLM logit-link"] <- AIC(logit.fit)
+      Rhat_Conv["MLE binomial GLM logit-link"] <- -1*logit.fit$converged
+    }else{
+      xicpt.log <- NA
+    }
+  }else{xicpt.log <- NA}
+  
+  if(any(!is.na(riskdiff)) & plot_log)   {
+    xicpt.RD <- riskdiff
+  }else{xicpt.RD <- NA}
+  
+  if(any(!is.na(true.beta))){
+    xicpt.true <- true.beta
+  }else{xicpt.true <- NA}
+  
+  xicpts <- c(xicpt.lin,  xicpt.true, xicpt.RD)# xicpt.id, xicpt.log,
+  xicpt <- data.frame(xicpts, PointEstimate = c("OLS estimate", 
+                                                "True parameter", 
+                                                "Observed RD")) #"MLE GLM id-link", "MLE GLM logit-link"
+  xicpt$PointEstimate[which(is.na(xicpt$xicpts))] <- paste(xicpt$PointEstimate[which(is.na(xicpt$xicpts))], " (NA)", sep = "")
+  xicpt$Scenario <- filename
+  
+  #run all Bayesian models
+  data_Bayes=list(
+    y = trial.dat$cure,
+    x = trial.dat$treat
+  ) 
+  
+  start <- Sys.time()
+  sink("sink.txt")
+  model=jags(data=data_Bayes, parameters.to.save=c("beta", "p"),      
+             model.file="/Users/dorannethomassen/Dropbox/PhD/RD modelling/BayesMods/RDBayes2.txt",    
+             n.chains=2,                               
+             n.iter=10000,                          
+             n.burnin=2000,
+             progress.bar = "none"
+  )
+  sink()
+  end <- Sys.time()
+  RunTimes["1. Proposed model"] <- as.numeric(end - start)
+  IC["1. Proposed model"] <- model$BUGSoutput$DIC
+  Rhat_Conv["1. Proposed model"] <- model$BUGSoutput$summary["beta", "Rhat"]
+  ESS["1. Proposed model"] <- model$BUGSoutput$summary["beta", "n.eff"]
+  ESSp0["1. Proposed model"] <- model$BUGSoutput$summary[100, "n.eff"]
+  ESSp1["1. Proposed model"] <- model$BUGSoutput$summary[600, "n.eff"]
+  
+  start <- Sys.time()
+  sink("sink.txt")
+  model2=jags(data=data_Bayes, parameters.to.save=c("mu","beta","logoddsbeta", "p"),      
+              model.file="/Users/dorannethomassen/Dropbox/PhD/RD modelling/BayesMods/logitRDBayes.txt",    
+              n.chains=2,                               
+              n.iter=10000,                          
+              n.burnin=2000,
+              progress.bar = "none"                                 
+  )
+  sink()
+  end <- Sys.time()
+  RunTimes["3. Logistic model + transform"] <- as.numeric(end - start)
+  IC["3. Logistic model + transform"] <- model2$BUGSoutput$DIC
+  Rhat_Conv["3. Logistic model + transform"] <- model2$BUGSoutput$summary["beta", "Rhat"]
+  ESS["3. Logistic model + transform"] <- model2$BUGSoutput$summary["beta", "n.eff"]
+  ESSp0["3. Logistic model + transform"] <- model2$BUGSoutput$summary[100, "n.eff"]
+  ESSp1["3. Logistic model + transform"] <- model2$BUGSoutput$summary[600, "n.eff"]
+  
+  start <- Sys.time()
+  sink("sink.txt")
+  model3=jags(data=data_Bayes, parameters.to.save=c("mu","beta", "p"),      
+              model.file="/Users/dorannethomassen/Dropbox/PhD/RD modelling/BayesMods/RDSpiegelhalter.txt",    
+              n.chains=2,                               
+              n.iter=10000,                          
+              n.burnin=2000,
+              progress.bar = "none"                                 
+  )
+  sink()
+  end <- Sys.time()
+  RunTimes["2. Model by Warn et al."] <- as.numeric(end - start)
+  IC["2. Model by Warn et al."] <- model3$BUGSoutput$DIC
+  Rhat_Conv["2. Model by Warn et al."] <- model3$BUGSoutput$summary["beta", "Rhat"]
+  ESS["2. Model by Warn et al."] <- model3$BUGSoutput$summary["beta", "n.eff"]
+  ESSp0["2. Model by Warn et al."] <- model3$BUGSoutput$summary[100, "n.eff"]
+  ESSp1["2. Model by Warn et al."] <- model3$BUGSoutput$summary[600, "n.eff"]
+
+  
+  # Extract the posterior samples for beta and p 
+  # and create dataframes in long format for ggplot
+  # Mean beta
+  beta.mod1 <- data.frame(beta = model$BUGSoutput$sims.list$beta,
+                          model = rep(ModelName[1], length(model$BUGSoutput$sims.list$beta)))
+  beta.mod2 <- data.frame(beta = model2$BUGSoutput$sims.list$beta,
+                          model = rep(ModelName[2], length(model2$BUGSoutput$sims.list$beta)))
+  beta.mod3 <- data.frame(beta = model3$BUGSoutput$sims.list$beta,
+                          model = rep(ModelName[3], length(model3$BUGSoutput$sims.list$beta)))
+  # beta.mod7 <- data.frame(beta = model7$BUGSoutput$sims.list$beta,
+  #                         model = rep(ModelName[6], length(model7$BUGSoutput$sims.list$beta)))
+  
+  beta.frame <- rbind(beta.mod1, beta.mod2, beta.mod3)
+  beta.frame$Scenario <- rep(filename, n=nrow(beta.frame))
+
+  
+  # mean p
+  p.mod1 <- data.frame(p = model$BUGSoutput$mean$p,
+                       model = rep(ModelName[1], length(model$BUGSoutput$mean$p)))
+  p.mod2 <- data.frame(p = model2$BUGSoutput$mean$p,
+                       model = rep(ModelName[2], length(model2$BUGSoutput$mean$p)))
+  p.mod3 <- data.frame(p = model3$BUGSoutput$mean$p,
+                       model = rep(ModelName[3], length(model3$BUGSoutput$mean$p)))
+  if(any(!is.na(id.fit))){
+    p.mod5 <- data.frame(p = id.fit$fitted.values,
+                         model = rep(ModelName[4], length(id.fit$fitted.values)))
+  }else{
+    p.mod5 <- data.frame(p = rep(NA, length(model3$BUGSoutput$mean$p)),
+                         model = rep(ModelName[4], length(model3$BUGSoutput$mean$p)))
+  }
+  p.mod6 <- data.frame(p = logit.fit$fitted.values,
+                       model = rep(ModelName[5], length(logit.fit$fitted.values)))
+  p.mod8 <- data.frame(p = lin.fit$fitted.values,
+                       model = rep(ModelName[6], length(lin.fit$fitted.values)))
+  
+  p.frame <- rbind(p.mod1, p.mod2, p.mod3, p.mod5, p.mod6, p.mod8)
+
+  p.frame$ptrue <- rep(true.p, length(ModelName))
+  p.frame$pat.id <- rep(1:length(model$BUGSoutput$mean$p), (nrow(p.frame)/length(model$BUGSoutput$mean$p)))
+  
+  #median p
+  p.med.mod1 <- data.frame(p = model$BUGSoutput$median$p,
+                       model = rep(ModelName[1], length(model$BUGSoutput$median$p)))
+  p.med.mod2 <- data.frame(p = model2$BUGSoutput$median$p,
+                       model = rep(ModelName[2], length(model2$BUGSoutput$median$p)))
+  p.med.mod3 <- data.frame(p = model3$BUGSoutput$median$p,
+                       model = rep(ModelName[3], length(model3$BUGSoutput$median$p)))
+  if(any(!is.na(id.fit))){
+    p.med.mod5 <- data.frame(p = id.fit$fitted.values,
+                         model = rep(ModelName[4], length(id.fit$fitted.values)))
+  }else{
+    p.med.mod5 <- data.frame(p = rep(NA, length(model3$BUGSoutput$mean$p)),
+                         model = rep(ModelName[4], length(model3$BUGSoutput$mean$p)))
+  }
+  p.med.mod6 <- data.frame(p = logit.fit$fitted.values,
+                       model = rep(ModelName[5], length(logit.fit$fitted.values)))
+  # p.med.mod7 <- data.frame(p = model7$BUGSoutput$median$p,
+  #                      model = rep(ModelName[6], length(model7$BUGSoutput$median$p)))
+  p.med.mod8 <- data.frame(p = lin.fit$fitted.values,
+                       model = rep(ModelName[6], length(lin.fit$fitted.values)))
+  
+  p.med.frame <- rbind(p.med.mod1, p.med.mod2, p.med.mod3, #p.med.mod4,  #p.med.mod7,
+                       p.med.mod5, p.med.mod6, p.med.mod8)
+  p.med.frame$ptrue <- rep(true.p, length(ModelName))
+  p.med.frame$pat.id <- rep(1:length(model$BUGSoutput$median$p), (nrow(p.med.frame)/length(model$BUGSoutput$median$p)))
+  
+  #create and save plots of the posterior distributions of beta and predicted p
+  if(plot_log){
+    plot1 <- ggplot(beta.frame, aes(beta, fill = model)) + 
+    geom_density(alpha = 0.2) +
+    geom_vline(data=xicpt, aes(xintercept = xicpts, linetype=PointEstimate)) +
+    #xlim(c(0,1))+
+    ylab("posterior density")+
+    xlab(expression("Risk Difference"))+
+    xlim(beta_xlim)+
+    ylim(beta_ylim)+
+    theme_bw()+
+    ggtitle(title)
+  #ggsave(paste("beta1_",filename,".pdf",sep = ""), device = "pdf", width = 7, height = 6)
+  }else{
+    plot1 <- ggplot(beta.frame[beta.frame$model!=ModelName[2],], aes(beta, fill = model)) + 
+    geom_density(alpha = 0.2) +
+    geom_vline(data=xicpt,aes(xintercept = xicpts, linetype=PointEstimate)) +
+    #xlim(c(0,1))+
+    ylab("posterior density")+
+    xlab(expression("Risk Difference"))+
+    xlim(beta_xlim)+
+    ylim(beta_ylim)+
+    theme_bw()+
+    ggtitle(title)
+  #ggsave(paste("beta1_",filename,".pdf",sep = ""), device = "pdf", width = 7, height = 6)
+  }
+  
+  # print(
+  # ggplot(p.frame, aes(p, fill = model)) + 
+  #   geom_histogram(alpha = 0.5, aes(y = ..density..), position = 'identity', color="black")+
+  #   xlim(c(0,1.1))+
+  #   ggtitle("Fitted values for p (MLE, post. mean)"))
+  #ggsave(paste("p1_",filename,".pdf",sep = ""), device = "pdf", width = 6, height = 6)
+  
+  # print(
+  # ggplot(p.med.frame, aes(p, fill = model)) + 
+  #   geom_histogram(alpha = 0.5, aes(y = ..density..), position = 'identity',color="black")+
+  #   xlim(c(0,1.1))+
+  #   ggtitle("Fitted values for p (MLE, post. median)"))
+  #ggsave(paste("p1_",filename,"_med.pdf",sep = ""), device = "pdf", width = 6, height = 6)
+  
+
+  plot2 <- ggplot(p.frame, aes(x=ptrue, y=p, fill = model, color=model)) + 
+    geom_point(shape=1)+
+    geom_abline(slope=1, intercept=0)+
+    theme_bw()+
+    xlim(c(0,1))+
+    ylim(c(0,1))+
+    xlab("True value of p")+
+    ylab("Predicted value of p")+
+    ggtitle(title)
+  #ggsave(paste("p2_",filename,".pdf",sep = ""), device = "pdf", width = 6, height = 6)
+  
+  
+  #calculate model stats
+  p.pred.mean <- reshape(data = p.frame, 
+                         idvar="pat.id", timevar = "model",v.names = "p",
+                         direction = "wide", sep = "")
+  names(p.pred.mean) <- c(names(p.pred.mean)[1:2], ModelName)
+  Brier.mean <- apply(X=p.pred.mean[,3:ncol(p.pred.mean)], MARGIN = 2, 
+                      FUN= function(x){Brier.score(y=data_Bayes$y, p.pred = x)})
+  
+  p.pred.median <- reshape(data = p.med.frame, 
+                         idvar="pat.id", timevar = "model",v.names = "p",
+                         direction = "wide", sep="_")
+  names(p.pred.median) <- c(names(p.pred.median)[1:2], ModelName)
+  Brier.median <- apply(X=p.pred.median[,3:ncol(p.pred.median)], MARGIN = 2, 
+                        FUN= function(x){Brier.score(y=data_Bayes$y, p.pred = x)})
+  
+  beta.mean <- c(model$BUGSoutput$mean$beta, 
+                model2$BUGSoutput$mean$beta,
+                model3$BUGSoutput$mean$beta,
+                xicpt.id,
+                xicpt.log,
+                #model7$BUGSoutput$mean$beta,
+                xicpt.lin)
+  names(beta.mean) <- names(Brier.mean)
+  L1_loss.mean <- abs(beta.mean-true.beta)
+  
+  beta.median <- c(model$BUGSoutput$median$beta, 
+                 model2$BUGSoutput$median$beta,
+                 model3$BUGSoutput$median$beta,
+                 xicpt.id,
+                 xicpt.log,
+                 #model7$BUGSoutput$median$beta,
+                 xicpt.lin)
+  names(beta.median) <- names(Brier.median)
+  
+  L1_loss.median <- abs(beta.median-true.beta)
+  
+  RMSE.p.mean <- apply(X=p.pred.mean[,3:ncol(p.pred.mean)], MARGIN = 2, 
+                       FUN= function(x){sqrt(mean((x-p.pred.mean$ptrue)^2))})
+  RMSE.p.median <- apply(X=p.pred.median[,3:ncol(p.pred.median)], MARGIN = 2, 
+                         FUN= function(x){sqrt(mean((x-p.pred.median$ptrue)^2))})
+  
+  MAE.p.mean <- apply(X=p.pred.mean[,3:ncol(p.pred.mean)], MARGIN = 2, 
+                      FUN= function(x){mean(abs(x-p.pred.mean$ptrue))})
+  MAE.p.median <- apply(X=p.pred.median[,3:ncol(p.pred.median)], MARGIN = 2, 
+                        FUN= function(x){mean(abs(x-p.pred.median$ptrue))})
+  
+  model.stats <- data.frame(Brier.mean, Brier.median, RMSE.p.mean, RMSE.p.median,
+                            MAE.p.mean, MAE.p.median, L1_loss.mean, L1_loss.median, 
+                            IC, Rhat_Conv, RunTimes, ESS, ESSp0, ESSp1)
+  
+  model.stats <- t(model.stats)
+  
+  kable_modstats <- knitr::kable(model.stats, digits = 4, format = "html")
+  return(list(beta_post = plot1,
+              p_pred = plot2,
+              beta.frame = beta.frame,
+              kable_modstats=kable_modstats,
+              xicpt = xicpt,
+              ModelName = ModelName))
+}
+
+# run.sim <- function(true.beta=NA, trial.dat, filename, title, true.p, beta_xlim, beta_ylim, plot_log = TRUE){
+#   
+#   ModelName <- c("1. Proposed model",
+#                  "3. Logistic model + transform",
+#                  "2. Model by Warn et al.",
+#                  "MLE binomial GLM id-link",
+#                  "MLE binomial GLM logit-link",
+#                  "OLS estimate")
+#   IC <- numeric(length(ModelName))
+#   names(IC) <- ModelName
+#   Rhat_Conv <- numeric(length(ModelName))
+#   names(Rhat_Conv) <- ModelName
+#   RunTimes <- numeric(length(ModelName))
+#   names(RunTimes) <- ModelName  
+#   
+#   #Data summary
+#   knitcrosstab <- knitr::kable(table(trial.dat$treat, trial.dat$cure), format = "html")
+#   riskdiff=(mean(trial.dat$cure[which(trial.dat$treat==1)])-mean(trial.dat$cure[which(trial.dat$treat==0)]))
+#   
+#   #Fit frequentist models if possible and save running times
+#   start <- Sys.time()
+#   id.fit <- PosGLM(cure ~  treat , data = trial.dat, family = binomial(link = "identity"))
+#   end <- Sys.time()
+#   RunTimes["MLE binomial GLM id-link"] <- as.numeric(end - start)
+#   
+#   start <- Sys.time()
+#   logit.fit <- PosGLM(cure ~  treat , data = trial.dat, family = binomial(link = "logit"))
+#   end <- Sys.time()
+#   RunTimes["MLE binomial GLM logit-link"] <- as.numeric(end - start)
+#   
+#   start <- Sys.time()
+#   lin.fit <- PosLM(trial.dat$cure ~  trial.dat$treat)
+#   end <- Sys.time()
+#   RunTimes["OLS estimate"] <- as.numeric(end - start)
+#   
+#   # save point estimates from frequentist models 
+#   IC["OLS estimate"] <- NA #AIC(lin.fit)
+#   if(!is.na(lin.fit)){
+#     xicpt.lin <- lin.fit$coefficients[2]
+#     Rhat_Conv["OLS estimate"] <- -1*TRUE
+#   }else{
+#     xicpt.lin <- NA
+#     Rhat_Conv["OLS estimate"] <- FALSE
+#   }
+#   
+#   if(!is.na(id.fit)){
+#     if(id.fit$converged){
+#       xicpt.id <- id.fit$coefficients[2]
+#       IC["MLE binomial GLM id-link"] <- AIC(id.fit)
+#       Rhat_Conv["MLE binomial GLM id-link"] <- -1*id.fit$converged
+#     }else{
+#       xicpt.id <- NA
+#     }
+#   }else{xicpt.id <- NA}
+#   
+#   if(!is.na(logit.fit) & plot_log) {
+#     if(logit.fit$converged){
+#       xicpt.log <- expit(logit.fit$coefficients[2]+logit.fit$coefficients[1])-expit(logit.fit$coefficients[1])
+#       IC["MLE binomial GLM logit-link"] <- AIC(logit.fit)
+#       Rhat_Conv["MLE binomial GLM logit-link"] <- -1*logit.fit$converged
+#     }else{
+#       xicpt.log <- NA
+#     }
+#   }else{xicpt.log <- NA}
+#   
+#   if(!is.na(riskdiff) & plot_log)   {
+#     xicpt.RD <- riskdiff
+#   }else{xicpt.RD <- NA}
+#   
+#   if(!is.na(true.beta)){
+#     xicpt.true <- true.beta
+#   }else{xicpt.true <- NA}
+#   
+#   xicpts <- c(xicpt.lin,  xicpt.true, xicpt.RD)# xicpt.id, xicpt.log,
+#   xicpt <- data.frame(xicpts, PointEstimate = c("OLS estimate", 
+#                                                 "True parameter", 
+#                                                 "Observed RD")) #"MLE GLM id-link", "MLE GLM logit-link"
+#   xicpt$PointEstimate[which(is.na(xicpt$xicpts))] <- paste(xicpt$PointEstimate[which(is.na(xicpt$xicpts))], " (NA)", sep = "")
+#   xicpt$Scenario <- filename
+#   
+#   #run all Bayesian models
+#   data_Bayes=list(
+#     y = trial.dat$cure,
+#     x = trial.dat$treat
+#   ) 
+#   
+#   start <- Sys.time()
+#   sink("sink.txt")
+#   model=jags(data=data_Bayes, parameters.to.save=c("beta", "p"),      
+#              model.file="/Users/dorannethomassen/Dropbox/PhD/RD modelling/BayesMods/RDBayes2.txt",    
+#              n.chains=2,                               
+#              n.iter=10000,                          
+#              n.burnin=2000,
+#              progress.bar = "none"
+#   )
+#   sink()
+#   end <- Sys.time()
+#   RunTimes["1. Proposed model"] <- as.numeric(end - start)
+#   IC["1. Proposed model"] <- model$BUGSoutput$DIC
+#   Rhat_Conv["1. Proposed model"] <- model$BUGSoutput$summary["beta", "Rhat"]
+#   
+#   start <- Sys.time()
+#   sink("sink.txt")
+#   model2=jags(data=data_Bayes, parameters.to.save=c("mu","beta","logoddsbeta", "p"),      
+#               model.file="/Users/dorannethomassen/Dropbox/PhD/RD modelling/BayesMods/logitRDBayes.txt",    
+#               n.chains=2,                               
+#               n.iter=10000,                          
+#               n.burnin=2000,
+#               progress.bar = "none"                                 
+#   )
+#   sink()
+#   end <- Sys.time()
+#   RunTimes["3. Logistic model + transform"] <- as.numeric(end - start)
+#   IC["3. Logistic model + transform"] <- model2$BUGSoutput$DIC
+#   Rhat_Conv["3. Logistic model + transform"] <- model2$BUGSoutput$summary["beta", "Rhat"]
+#   
+#   start <- Sys.time()
+#   sink("sink.txt")
+#   model3=jags(data=data_Bayes, parameters.to.save=c("mu","beta", "p"),      
+#               model.file="/Users/dorannethomassen/Dropbox/PhD/RD modelling/BayesMods/RDSpiegelhalter.txt",    
+#               n.chains=2,                               
+#               n.iter=10000,                          
+#               n.burnin=2000,
+#               progress.bar = "none"                                 
+#   )
+#   sink()
+#   end <- Sys.time()
+#   RunTimes["2. Model by Warn et al."] <- as.numeric(end - start)
+#   IC["2. Model by Warn et al."] <- model3$BUGSoutput$DIC
+#   Rhat_Conv["2. Model by Warn et al."] <- model3$BUGSoutput$summary["beta", "Rhat"]
+# 
+#   
+#   # Extract the posterior samples for beta and p 
+#   # and create dataframes in long format for ggplot
+#   # Mean beta
+#   beta.mod1 <- data.frame(beta = model$BUGSoutput$sims.list$beta,
+#                           model = rep(ModelName[1], length(model$BUGSoutput$sims.list$beta)))
+#   beta.mod2 <- data.frame(beta = model2$BUGSoutput$sims.list$beta,
+#                           model = rep(ModelName[2], length(model2$BUGSoutput$sims.list$beta)))
+#   beta.mod3 <- data.frame(beta = model3$BUGSoutput$sims.list$beta,
+#                           model = rep(ModelName[3], length(model3$BUGSoutput$sims.list$beta)))
+#   # beta.mod7 <- data.frame(beta = model7$BUGSoutput$sims.list$beta,
+#   #                         model = rep(ModelName[6], length(model7$BUGSoutput$sims.list$beta)))
+#   
+#   beta.frame <- rbind(beta.mod1, beta.mod2, beta.mod3)
+#   beta.frame$Scenario <- rep(filename, n=nrow(beta.frame))
+# 
+#   
+#   # mean p
+#   p.mod1 <- data.frame(p = model$BUGSoutput$mean$p,
+#                        model = rep(ModelName[1], length(model$BUGSoutput$mean$p)))
+#   p.mod2 <- data.frame(p = model2$BUGSoutput$mean$p,
+#                        model = rep(ModelName[2], length(model2$BUGSoutput$mean$p)))
+#   p.mod3 <- data.frame(p = model3$BUGSoutput$mean$p,
+#                        model = rep(ModelName[3], length(model3$BUGSoutput$mean$p)))
+#   if(!is.na(id.fit)){
+#     p.mod5 <- data.frame(p = id.fit$fitted.values,
+#                          model = rep(ModelName[4], length(id.fit$fitted.values)))
+#   }else{
+#     p.mod5 <- data.frame(p = rep(NA, length(model3$BUGSoutput$mean$p)),
+#                          model = rep(ModelName[4], length(model3$BUGSoutput$mean$p)))
+#   }
+#   p.mod6 <- data.frame(p = logit.fit$fitted.values,
+#                        model = rep(ModelName[5], length(logit.fit$fitted.values)))
+#   p.mod8 <- data.frame(p = lin.fit$fitted.values,
+#                        model = rep(ModelName[6], length(lin.fit$fitted.values)))
+#   
+#   p.frame <- rbind(p.mod1, p.mod2, p.mod3, p.mod5, p.mod6, p.mod8)
+# 
+#   p.frame$ptrue <- rep(true.p, length(ModelName))
+#   p.frame$pat.id <- rep(1:length(model$BUGSoutput$mean$p), (nrow(p.frame)/length(model$BUGSoutput$mean$p)))
+#   
+#   #median p
+#   p.med.mod1 <- data.frame(p = model$BUGSoutput$median$p,
+#                        model = rep(ModelName[1], length(model$BUGSoutput$median$p)))
+#   p.med.mod2 <- data.frame(p = model2$BUGSoutput$median$p,
+#                        model = rep(ModelName[2], length(model2$BUGSoutput$median$p)))
+#   p.med.mod3 <- data.frame(p = model3$BUGSoutput$median$p,
+#                        model = rep(ModelName[3], length(model3$BUGSoutput$median$p)))
+#   if(!is.na(id.fit)){
+#     p.med.mod5 <- data.frame(p = id.fit$fitted.values,
+#                          model = rep(ModelName[4], length(id.fit$fitted.values)))
+#   }else{
+#     p.med.mod5 <- data.frame(p = rep(NA, length(model3$BUGSoutput$mean$p)),
+#                          model = rep(ModelName[4], length(model3$BUGSoutput$mean$p)))
+#   }
+#   p.med.mod6 <- data.frame(p = logit.fit$fitted.values,
+#                        model = rep(ModelName[5], length(logit.fit$fitted.values)))
+#   # p.med.mod7 <- data.frame(p = model7$BUGSoutput$median$p,
+#   #                      model = rep(ModelName[6], length(model7$BUGSoutput$median$p)))
+#   p.med.mod8 <- data.frame(p = lin.fit$fitted.values,
+#                        model = rep(ModelName[6], length(lin.fit$fitted.values)))
+#   
+#   p.med.frame <- rbind(p.med.mod1, p.med.mod2, p.med.mod3, #p.med.mod4,  #p.med.mod7,
+#                        p.med.mod5, p.med.mod6, p.med.mod8)
+#   p.med.frame$ptrue <- rep(true.p, length(ModelName))
+#   p.med.frame$pat.id <- rep(1:length(model$BUGSoutput$median$p), (nrow(p.med.frame)/length(model$BUGSoutput$median$p)))
+#   
+#   #create and save plots of the posterior distributions of beta and predicted p
+#   if(plot_log){
+#     plot1 <- ggplot(beta.frame, aes(beta, fill = model)) + 
+#     geom_density(alpha = 0.2) +
+#     geom_vline(data=xicpt, aes(xintercept = xicpts, linetype=PointEstimate)) +
+#     #xlim(c(0,1))+
+#     ylab("posterior density")+
+#     xlab(expression("Risk Difference"))+
+#     xlim(beta_xlim)+
+#     ylim(beta_ylim)+
+#     theme_bw()+
+#     ggtitle(title)
+#   #ggsave(paste("beta1_",filename,".pdf",sep = ""), device = "pdf", width = 7, height = 6)
+#   }else{
+#     plot1 <- ggplot(beta.frame[beta.frame$model!=ModelName[2],], aes(beta, fill = model)) + 
+#     geom_density(alpha = 0.2) +
+#     geom_vline(data=xicpt,aes(xintercept = xicpts, linetype=PointEstimate)) +
+#     #xlim(c(0,1))+
+#     ylab("posterior density")+
+#     xlab(expression("Risk Difference"))+
+#     xlim(beta_xlim)+
+#     ylim(beta_ylim)+
+#     theme_bw()+
+#     ggtitle(title)
+#   #ggsave(paste("beta1_",filename,".pdf",sep = ""), device = "pdf", width = 7, height = 6)
+#   }
+# 
+#   plot2 <- ggplot(p.frame, aes(x=ptrue, y=p, fill = model, color=model)) + 
+#     geom_point(shape=1)+
+#     geom_abline(slope=1, intercept=0)+
+#     theme_bw()+
+#     xlim(c(0,1))+
+#     ylim(c(0,1))+
+#     xlab("True value of p")+
+#     ylab("Predicted value of p")+
+#     ggtitle(title)
+#   #ggsave(paste("p2_",filename,".pdf",sep = ""), device = "pdf", width = 6, height = 6)
+#   
+#   
+#   #calculate model stats
+#   p.pred.mean <- reshape(data = p.frame, 
+#                          idvar="pat.id", timevar = "model",v.names = "p",
+#                          direction = "wide", sep = "")
+#   names(p.pred.mean) <- c(names(p.pred.mean)[1:2], ModelName)
+#   Brier.mean <- apply(X=p.pred.mean[,3:ncol(p.pred.mean)], MARGIN = 2, 
+#                       FUN= function(x){Brier.score(y=data_Bayes$y, p.pred = x)})
+#   
+#   p.pred.median <- reshape(data = p.med.frame, 
+#                          idvar="pat.id", timevar = "model",v.names = "p",
+#                          direction = "wide", sep="_")
+#   names(p.pred.median) <- c(names(p.pred.median)[1:2], ModelName)
+#   Brier.median <- apply(X=p.pred.median[,3:ncol(p.pred.median)], MARGIN = 2, 
+#                         FUN= function(x){Brier.score(y=data_Bayes$y, p.pred = x)})
+#   
+#   beta.mean <- c(model$BUGSoutput$mean$beta, 
+#                 model2$BUGSoutput$mean$beta,
+#                 model3$BUGSoutput$mean$beta,
+#                 xicpt.id,
+#                 xicpt.log,
+#                 xicpt.lin)
+#   names(beta.mean) <- names(Brier.mean)
+#   L1_loss.mean <- abs(beta.mean-true.beta)
+#   
+#   beta.median <- c(model$BUGSoutput$median$beta, 
+#                  model2$BUGSoutput$median$beta,
+#                  model3$BUGSoutput$median$beta,
+#                  xicpt.id,
+#                  xicpt.log,
+#                  xicpt.lin)
+#   names(beta.median) <- names(Brier.median)
+#   
+#   L1_loss.median <- abs(beta.median-true.beta)
+#   
+#   RMSE.p.mean <- apply(X=p.pred.mean[,3:ncol(p.pred.mean)], MARGIN = 2, 
+#                        FUN= function(x){sqrt(mean((x-p.pred.mean$ptrue)^2))})
+#   RMSE.p.median <- apply(X=p.pred.median[,3:ncol(p.pred.median)], MARGIN = 2, 
+#                          FUN= function(x){sqrt(mean((x-p.pred.median$ptrue)^2))})
+#   
+#   MAE.p.mean <- apply(X=p.pred.mean[,3:ncol(p.pred.mean)], MARGIN = 2, 
+#                       FUN= function(x){mean(abs(x-p.pred.mean$ptrue))})
+#   MAE.p.median <- apply(X=p.pred.median[,3:ncol(p.pred.median)], MARGIN = 2, 
+#                         FUN= function(x){mean(abs(x-p.pred.median$ptrue))})
+#   
+#   model.stats <- data.frame(Brier.mean, Brier.median, RMSE.p.mean, RMSE.p.median,
+#                             MAE.p.mean, MAE.p.median, L1_loss.mean, L1_loss.median, 
+#                             IC, Rhat_Conv, RunTimes)
+#   
+#   model.stats <- t(model.stats)
+#   
+#   kable_modstats <- knitr::kable(model.stats, digits = 4, format = "html")
+#   
+#   return(list(beta_post = plot1,
+#               p_pred = plot2,
+#               kable_modstats = kable_modstats,
+#               beta.frame = beta.frame,
+#               xicpt = xicpt,
+#               ModelName = ModelName))
+# }
+```
+
+# Single trial
+## Binary treatment variable only
+### Sample size 500 per arm
+```{r, message=FALSE, warning=FALSE}
+set.seed(196)
+n_arm <- 500
+treat <- c(rep(0,n_arm), rep(1,n_arm))
+cat("", file = "modelstats.html", append = FALSE)
+
+beta_xlim = c(-0.3,0.7)
+beta_ylim = c(0,40)
+#beta fixed, increase alpha
+
+#alpha = 0.5
+true.beta <- 0.3
+true.p <- 0.5+true.beta*treat
+
+cure <- rbinom(n=length(treat), size=1, prob = true.p)
+trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
+
+plots <- run.sim(true.beta=true.beta,
+        trial.dat = trial.dat,
+        filename="1x_bin_p=0.5+0.3x", 
+        title="x_{i1} binary, p_{i}=0.5+0.3x_{i1}",
+        true.p = true.p,
+        beta_xlim = beta_xlim,
+        beta_ylim = beta_ylim)
+
+beta.plot <- plots$beta.frame
+xicpt.plot <- plots$xicpt
+plots$kable_modstats
+
+
+rm(cure, trial.dat, true.beta, true.p)
+
+#alpha = 0.6
+true.beta <- 0.3
+true.p <- 0.6+true.beta*treat
+
+cure <- rbinom(n=length(treat), size=1, prob = true.p)
+trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
+
+plots <- run.sim(true.beta=true.beta,
+        trial.dat = trial.dat,
+        filename="1x_bin_p=0.6+0.3x", 
+        title="x_{i1} binary, p_{i}=0.6+0.3x_{i1}",
+        true.p = true.p,
+        beta_xlim = beta_xlim,
+        beta_ylim = beta_ylim)
+
+beta.plot <- rbind(beta.plot, plots$beta.frame)
+xicpt.plot <- rbind(xicpt.plot, plots$xicpt)
+plots$kable_modstats
+
+rm(cure, trial.dat, true.beta, true.p)
+
+# alpha =0.69
+true.beta <- 0.3
+true.p <- 0.69+true.beta*treat
+
+cure <- rbinom(n=length(treat), size=1, prob = true.p)
+trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
+
+plots <- run.sim(true.beta=true.beta,
+        trial.dat = trial.dat,
+        filename="1x_bin_p=0.69+0.3x",
+        title="x_{i1} binary, p_{i}=0.69+0.3x_{i1}",
+        true.p = true.p,
+        beta_xlim = beta_xlim,
+        beta_ylim = beta_ylim)
+
+beta.plot <- rbind(beta.plot, plots$beta.frame)
+xicpt.plot <- rbind(xicpt.plot, plots$xicpt)
+plots$kable_modstats
+
+rm(cure, trial.dat, true.beta, true.p)
+
+
+###
+#alpha = 0.8
+true.beta <- 0
+true.p <- 0.8+true.beta*treat
+
+cure <- rbinom(n=length(treat), size=1, prob = true.p)
+trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
+
+plots <- run.sim(true.beta=true.beta,
+        trial.dat = trial.dat,
+        filename="1x_bin_p=0.8+0x", 
+        title="x_{i1} binary, p_{i}=0.8+0*x_{i1}",
+        true.p = true.p,
+        beta_xlim = beta_xlim,
+        beta_ylim = beta_ylim)
+
+beta.plot <- rbind(beta.plot, plots$beta.frame)
+xicpt.plot <- rbind(xicpt.plot, plots$xicpt)
+plots$kable_modstats
+
+rm(cure, trial.dat, true.beta, true.p)
+
+#alpha = 0.9
+true.beta <- 0
+true.p <- 0.9+true.beta*treat
+
+cure <- rbinom(n=length(treat), size=1, prob = true.p)
+trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
+
+plots <- run.sim(true.beta=true.beta,
+        trial.dat = trial.dat,
+        filename="1x_bin_p=0.9+0x", 
+        title="x_{i1} binary, p_{i}=0.9+0*x_{i1}",
+        true.p = true.p,
+        beta_xlim = beta_xlim,
+        beta_ylim = beta_ylim)
+
+beta.plot <- rbind(beta.plot, plots$beta.frame)
+xicpt.plot <- rbind(xicpt.plot, plots$xicpt)
+plots$kable_modstats
+
+rm(cure, trial.dat, true.beta, true.p)
+
+
+# alpha = 0.99
+true.beta <- 0
+true.p <- 0.99 + true.beta*treat
+
+cure <- rbinom(n=length(treat), size=1, prob = true.p)
+trial.dat <- data.frame(cure, treat)
+print(table(trial.dat$cure, trial.dat$treat))
+
+plots <- run.sim(true.beta=true.beta,
+        trial.dat = trial.dat,
+        filename="1x_bin_p=0.99+0x",
+        title="x_{i1} binary, p_{i}=0.99+0*x_{i1}",
+        true.p = true.p,
+        beta_xlim = beta_xlim,
+        beta_ylim = beta_ylim)
+
+beta.plot <- rbind(beta.plot, plots$beta.frame)
+xicpt.plot <- rbind(xicpt.plot, plots$xicpt)
+plots$kable_modstats
+
+rm(cure, trial.dat, true.beta, true.p)
+
+###Plots
+
+beta.plot$Scenario <- factor(beta.plot$Scenario,
+                   levels=c("1x_bin_p=0.5+0.3x",
+                            "1x_bin_p=0.6+0.3x",
+                            "1x_bin_p=0.69+0.3x",
+                            "1x_bin_p=0.8+0x",
+                            "1x_bin_p=0.9+0x",
+                            "1x_bin_p=0.99+0x"),
+                   labels=c(expression(paste("A. ", x[i*1], " binary, ", p[i],"=0.5+0.3",x[i*1],".")),
+                            expression(paste("B. ", x[i*1], " binary, ", p[i],"=0.6+0.3",x[i*1],".")),
+                            expression(paste("C. ", x[i*1], " binary, ", p[i],"=0.69+0.3",x[i*1],".")),
+                            expression(paste("D. ", x[i*1], " binary, ", p[i],"=0.8+0",x[i*1],".")),
+                            expression(paste("E. ", x[i*1], " binary, ", p[i],"=0.9+0",x[i*1],".")),
+                            expression(paste("F. ", x[i*1], " binary, ", p[i],"=0.99+0",x[i*1],"."))
+                            ))
+
+xicpt.plot$Scenario <- factor(xicpt.plot$Scenario,
+                   levels=c("1x_bin_p=0.5+0.3x",
+                            "1x_bin_p=0.6+0.3x",
+                            "1x_bin_p=0.69+0.3x",
+                            "1x_bin_p=0.8+0x",
+                            "1x_bin_p=0.9+0x",
+                            "1x_bin_p=0.99+0x"),
+                   labels=c(expression(paste("A. ", x[i*1], " binary, ", p[i],"=0.5+0.3",x[i*1],".")),
+                            expression(paste("B. ", x[i*1], " binary, ", p[i],"=0.6+0.3",x[i*1],".")),
+                            expression(paste("C. ", x[i*1], " binary, ", p[i],"=0.69+0.3",x[i*1],".")),
+                            expression(paste("D. ", x[i*1], " binary, ", p[i],"=0.8+0",x[i*1],".")),
+                            expression(paste("E. ", x[i*1], " binary, ", p[i],"=0.9+0",x[i*1],".")),
+                            expression(paste("F. ", x[i*1], " binary, ", p[i],"=0.99+0",x[i*1],"."))
+                            ))
+
+##plot maken
+    print(
+    plot1 <- ggplot(beta.plot, aes(beta, fill = model)) + 
+    geom_density(alpha = 0.2) +
+    geom_vline(data=xicpt.plot, aes(xintercept = xicpts, linetype=PointEstimate)) +
+    ylab("posterior density")+
+    xlab(expression("Risk Difference"))+
+    xlim(beta_xlim)+
+    ylim(beta_ylim)+
+    theme_bw()+
+    coord_cartesian(ylim=c(0,20))+
+    facet_wrap(~Scenario, ncol = 2, dir = "v", labeller = label_parsed))
+    
+ 
+ggsave(plot = plot1, filename="1x_bin.pdf", height=6, width = 7.5)
+```
+
